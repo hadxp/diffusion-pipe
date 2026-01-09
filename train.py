@@ -351,6 +351,12 @@ if __name__ == '__main__':
     elif model_type == 'hunyuan_video_15':
         from models import hunyuan_video_15
         model = hunyuan_video_15.HunyuanVideo15Pipeline(config)
+    elif model_type == 'framepack-hv':
+        from models import hy_framepack
+        model = hy_framepack.HYFramepackPipeline(config)
+    elif model_type == 'kandinsky5':
+        from models import kandinsky5
+        model = kandinsky5.Kandinsky5Pipeline(config)
     else:
         raise NotImplementedError(f'Model type {model_type} is not implemented')
 
@@ -391,6 +397,10 @@ if __name__ == '__main__':
         eval_image_micro_batch_size_per_gpu = {x[0]: x[1] for x in eval_image_micro_batch_size_per_gpu}
 
     default_micro_batch_size_per_gpu = list(micro_batch_size_per_gpu.values())[0]
+    default_eval_micro_batch_size_per_gpu = list(eval_micro_batch_size_per_gpu.values())[0]
+
+    default_image_micro_batch_size_per_gpu = list(image_micro_batch_size_per_gpu.values())[0]
+    default_eval_image_micro_batch_size_per_gpu = list(eval_image_micro_batch_size_per_gpu.values())[0]
 
     gradient_release = config['optimizer'].get('gradient_release', False)
     ds_config = {
@@ -401,7 +411,7 @@ if __name__ == '__main__':
         'steps_per_print': config.get('steps_per_print', 1),
     }
     caching_batch_size = config.get('caching_batch_size', 1)
-    dataset_manager = dataset_util.DatasetManager(model, regenerate_cache=regenerate_cache, trust_cache=args.trust_cache, caching_batch_size=caching_batch_size)
+    dataset_manager = dataset_util.DatasetManager(model, regenerate_cache=regenerate_cache, caching_batch_size=caching_batch_size)
 
     train_data = dataset_util.Dataset(dataset_config, model, skip_dataset_validation=args.i_know_what_i_am_doing)
     dataset_manager.register(train_data)
@@ -743,22 +753,20 @@ if __name__ == '__main__':
          grid = model_engine.grid
          model_engine.first_last_stage_group = dist.new_group(ranks=[grid.pp_group[0], grid.pp_group[-1]])
 
-
-
     train_data.post_init(
         model_engine.grid.get_data_parallel_rank(),
         model_engine.grid.get_data_parallel_world_size(),
-        micro_batch_size_per_gpu,
+        default_micro_batch_size_per_gpu,
         model_engine.gradient_accumulation_steps(),
-        image_micro_batch_size_per_gpu,
+        default_image_micro_batch_size_per_gpu
     )
     for eval_data in eval_data_map.values():
         eval_data.post_init(
             model_engine.grid.get_data_parallel_rank(),
             model_engine.grid.get_data_parallel_world_size(),
-            eval_micro_batch_size_per_gpu,
+            default_eval_micro_batch_size_per_gpu,
             config['eval_gradient_accumulation_steps'],
-            eval_image_micro_batch_size_per_gpu,
+            default_eval_image_micro_batch_size_per_gpu
         )
 
     # Might be useful because we set things in fp16 / bf16 without explicitly enabling Deepspeed fp16 mode.

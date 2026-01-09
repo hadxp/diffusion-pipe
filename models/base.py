@@ -68,7 +68,7 @@ def convert_crop_and_resize(pil_img, width_and_height):
 
 
 class PreprocessMediaFile:
-    def __init__(self, config, support_video=False, framerate=None, round_height=16, round_width=16, round_frames=4):
+    def __init__(self, config, support_video=False, framerate=None, round_height=1, round_width=1, round_frames=1):
         self.config = config
         self.video_clip_mode = config.get('video_clip_mode', 'single_beginning')
         print(f'using video_clip_mode={self.video_clip_mode}')
@@ -81,35 +81,19 @@ class PreprocessMediaFile:
         self.round_frames = round_frames
         if self.support_video:
             assert self.framerate
-        self.tarfile_map = {}
 
-    def __del__(self):
-        for tar_f in self.tarfile_map.values():
-            tar_f.close()
-
-    def __call__(self, spec, mask_filepath, size_bucket=None):
-        is_video = (Path(spec[1]).suffix in VIDEO_EXTENSIONS)
-
-        if spec[0] is None:
-            tar_f = None
-            filepath_or_file = str(spec[1])
-        else:
-            tar_filename = spec[0]
-            if tar_filename not in self.tarfile_map:
-                self.tarfile_map[tar_filename] = tarfile.TarFile(tar_filename)
-            tar_f = self.tarfile_map[tar_filename]
-            filepath_or_file = tar_f.extractfile(str(spec[1]))
-
+    def __call__(self, filepath, mask_filepath, size_bucket=None):
+        is_video = (Path(filepath).suffix in VIDEO_EXTENSIONS)
         if is_video:
             assert self.support_video
             num_frames = 0
-            for frame in imageio.v3.imiter(filepath_or_file, fps=self.framerate):
+            for frame in imageio.v3.imiter(filepath, fps=self.framerate):
                 num_frames += 1
                 height, width = frame.shape[:2]
-            video = imageio.v3.imiter(filepath_or_file, fps=self.framerate)
+            video = imageio.v3.imiter(filepath, fps=self.framerate)
         else:
             num_frames = 1
-            pil_img = Image.open(filepath_or_file)
+            pil_img = Image.open(filepath)
             height, width = pil_img.height, pil_img.width
             video = [pil_img]
 
@@ -130,7 +114,7 @@ class PreprocessMediaFile:
             if mask_hw != img_hw:
                 raise ValueError(
                     f'Mask shape {mask_hw} was not the same as image shape {img_hw}.\n'
-                    f'Image path: {spec[1]}\n'
+                    f'Image path: {filepath}\n'
                     f'Mask path: {mask_filepath}'
                 )
             mask_img = ImageOps.fit(mask_img, resize_wh)
@@ -145,9 +129,6 @@ class PreprocessMediaFile:
             cropped_image = convert_crop_and_resize(frame, resize_wh)
             resized_video[i, ...] = self.pil_to_tensor(cropped_image)
 
-        if hasattr(filepath_or_file, 'close'):
-            filepath_or_file.close()
-
         if not self.support_video:
             return [(resized_video.squeeze(0), mask)]
 
@@ -158,7 +139,6 @@ class PreprocessMediaFile:
         else:
             videos = extract_clips(resized_video, frames_rounded, self.video_clip_mode)
             return [(video, mask) for video in videos]
-
 
 class BasePipeline:
     framerate = None
