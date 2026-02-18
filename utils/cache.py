@@ -6,7 +6,6 @@ from collections import defaultdict
 
 import torch
 
-
 class Cache:
     def __init__(self, path: str, fingerprint: str, shard_size_gb=1):
         self.path = Path(path)
@@ -129,7 +128,6 @@ class Cache:
         current_size_gb = self.shard_file.tell() / 1_000_000_000
         if current_size_gb >= self.shard_size_gb:
             self.finalize_current_shard()
-
 
 # for testing
 if __name__ == '__main__':

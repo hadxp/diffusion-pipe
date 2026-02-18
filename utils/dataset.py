@@ -274,7 +274,11 @@ class DirectoryDataset:
         self.mask_path = Path(self.directory_config['mask_path']) if 'mask_path' in self.directory_config else None
         # For testing. Default if a mask is missing.
         self.default_mask_file = Path(self.directory_config['default_mask_file']) if 'default_mask_file' in self.directory_config else None
-        self.cache_dir = self.path / 'cache' / self.model_name
+        
+        if self.directory_config.get('cache_dir'):
+            self.cache_dir = Path(self.directory_config['cache_dir']) / 'cache' / self.model_name
+        else:
+            self.cache_dir = self.path / 'cache' / self.model_name
 
         if not self.path.exists() or not self.path.is_dir():
             raise RuntimeError(f'Invalid path: {self.path}')
@@ -593,9 +597,6 @@ class Dataset:
             self.directory_datasets.append(directory_dataset)
 
     def post_init(self, data_parallel_rank, data_parallel_world_size, per_device_batch_size, gradient_accumulation_steps, per_device_batch_size_image):
-
-        print(str(type(per_device_batch_size)))
-
         self.data_parallel_rank = data_parallel_rank
         self.data_parallel_world_size = data_parallel_world_size
         self.batch_size = per_device_batch_size * gradient_accumulation_steps
