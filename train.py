@@ -1,6 +1,9 @@
 import argparse
 import os
 import wandb
+import sys
+# Disable comfy_kitchen during training to avoid autograd errors
+sys.modules["comfy_kitchen"] = None
 from datetime import datetime, timezone
 import shutil
 import glob
@@ -24,7 +27,7 @@ import numpy as np
 
 from utils import dataset as dataset_util
 from utils import common
-from utils.common import is_main_process, get_rank, DTYPE_MAP, empty_cuda_cache, setup_checkpoint_signal, setup_interrupt_handler
+from utils.common import is_main_process, get_rank, DTYPE_MAP, empty_cuda_cache , setup_checkpoint_signal, setup_interrupt_handler
 import utils.saver
 from utils.isolate_rng import isolate_rng
 from utils.patches import apply_patches
@@ -599,7 +602,7 @@ if __name__ == '__main__':
         config=ds_config,
     )
     # Newer Deepspeed versions fail when pipeline_stages>1 because of a check on this field which defaults to False. But, pipeline
-    # parallelism has always relied on "Torch-style" backward(), so I think this is an oversight by Deepspeed devs and it's safe
+    # parallelism has always relied on "Torch-style" backward(), so I think this is an oversight by Deepspeed devs, and it's safe
     # to force this to True to get it to work.
     model_engine._support_torch_style_backward = True
     global_batch_size = model_engine.train_micro_batch_size_per_gpu() * model_engine.gradient_accumulation_steps() * model_engine.grid.get_data_parallel_world_size()
