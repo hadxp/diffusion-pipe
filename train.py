@@ -330,7 +330,7 @@ if __name__ == '__main__':
     elif model_type == 'sd3':
         from models import sd3
         model = sd3.SD3Pipeline(config)
-    elif model_type == 'cosmos_predict2':
+    elif model_type == 'cosmos_predict2' or model_type == 'anima':
         from models import cosmos_predict2
         model = cosmos_predict2.CosmosPredict2Pipeline(config)
     elif model_type == 'omnigen2':
@@ -357,6 +357,9 @@ if __name__ == '__main__':
     elif model_type == 'kandinsky5':
         from models import kandinsky5
         model = kandinsky5.Kandinsky5Pipeline(config)
+    elif model_type == 'flux2':
+        from models import flux2
+        model = flux2.Flux2Pipeline(config)
     else:
         raise NotImplementedError(f'Model type {model_type} is not implemented')
 
@@ -595,6 +598,10 @@ if __name__ == '__main__':
         model=pipeline_model,
         config=ds_config,
     )
+    # Newer Deepspeed versions fail when pipeline_stages>1 because of a check on this field which defaults to False. But, pipeline
+    # parallelism has always relied on "Torch-style" backward(), so I think this is an oversight by Deepspeed devs and it's safe
+    # to force this to True to get it to work.
+    model_engine._support_torch_style_backward = True
     global_batch_size = model_engine.train_micro_batch_size_per_gpu() * model_engine.gradient_accumulation_steps() * model_engine.grid.get_data_parallel_world_size()
     print(f'Global batch size = {global_batch_size}')
 

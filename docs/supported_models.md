@@ -22,6 +22,8 @@
 |AuraFlow        |✅    |❌              |✅                |
 |Z-Image         |✅    |✅              |✅                |
 |HunyuanVideo-1.5|✅    |✅              |✅                |
+|Flux 2          |✅    |✅              |✅                |
+|Anima           |✅    |✅              |✅                |
 
 
 ## SDXL
@@ -475,3 +477,87 @@ timestep_sample_method = 'logit_normal'
 ```
 
 All model files are the ComfyUI versions. LoRAs are saved in ComfyUI format.
+
+## Flux 2
+Dev:
+```
+[model]
+type = 'flux2'
+diffusion_model = '/home/anon/ComfyUI/models/diffusion_models/flux2-dev.safetensors'
+vae = '/home/anon/ComfyUI/models/vae/flux2-vae.safetensors'
+text_encoders = [
+    {path = '/home/anon/ComfyUI/models/text_encoders/mistral_3_small_flux2_fp8.safetensors', type = 'flux2'}
+]
+dtype = 'bfloat16'
+diffusion_model_dtype = 'float8'
+timestep_sample_method = 'logit_normal'
+shift = 3
+```
+
+Klein 4b:
+```
+[model]
+type = 'flux2'
+diffusion_model = '/data2/imagegen_models/comfyui-models/flux-2-klein-base-4b.safetensors'
+vae = '/home/anon/ComfyUI/models/vae/flux2-vae.safetensors'
+text_encoders = [
+    {path = '/data2/imagegen_models/comfyui-models/qwen_3_4b.safetensors', type = 'flux2'}
+]
+dtype = 'bfloat16'
+# Probably don't need fp8 for 4b unless you have very low VRAM.
+#diffusion_model_dtype = 'float8'
+timestep_sample_method = 'logit_normal'
+shift = 3
+```
+
+Klein 9b:
+```
+[model]
+type = 'flux2'
+diffusion_model = '/data2/imagegen_models/comfyui-models/flux-2-klein-base-9b.safetensors'
+vae = '/home/anon/ComfyUI/models/vae/flux2-vae.safetensors'
+text_encoders = [
+    {path = '/data2/imagegen_models/comfyui-models/qwen_3_8b.safetensors', type = 'flux2'}
+]
+dtype = 'bfloat16'
+diffusion_model_dtype = 'float8'
+timestep_sample_method = 'logit_normal'
+shift = 3
+```
+
+Notes:
+- Use ComfyUI-compatible weights for all models.
+- For Klein, **use the base model**. Klein is step-distilled, and so the distilled version will not work well.
+- Edit training also works, see the [example dataset config](../examples/flux_kontext_dataset.toml) for how to configure an edit dataset.
+- Without block swapping, Dev needs at least 48GB VRAM for LoRA training and probably a lot of system RAM also.
+- The Flux2 VAE has more channels, so a timestep shift value above 1 is useful. I don't know the best value but 3 seems to work well.
+- Make sure you're using the right text encoder. Each version uses a different TE. If you use the wrong one, the caching will still run but you will get shape mismatch errors when it tries to train.
+- The text encoder can be an fp8 version. The diffusion model should be the full one though. fp8 diffusion model might work if it is a plain format one (the Kleins, maybe) but fp8_scaled / fp8_mixed definitely will not work.
+
+LoRAs are saved in ComfyUI format.
+
+## Anima
+```
+[model]
+type = 'anima'
+transformer_path = '/data2/imagegen_models/comfyui-models/anima-preview.safetensors'
+vae_path = '/data2/imagegen_models/comfyui-models/qwen_image_vae.safetensors'
+llm_path = '/data2/imagegen_models/comfyui-models/qwen_3_06b_base.safetensors'
+dtype = 'bfloat16'
+# Comment out to train the llm_adapter, or adjust the learning rate to be >0.
+llm_adapter_lr = 0
+```
+
+Use the official [ComfyUI format model files](https://huggingface.co/circlestone-labs/Anima).
+
+Notes:
+- Might need to use lower learning rate than other models.
+- You can control the llm_adapter learning rate separately. This is an adapter that processes the Qwen3 embeddings before feeding into the diffusion model.
+  - Setting `llm_adapter_lr=0` disables training it entirely. This probably makes training more stable for small datasets.
+  - If you have a larger dataset or a lot of brand-new concepts, you can try training the llm_adapter and see if it helps.
+- **Assume that any lora trained on the preview version won't work well on the final version**
+  - Consider it to be a "throwaway lora" that you likely will need to retrain.
+  - The underlying model is still training and it will diverge from the preview weights.
+  - If you are uploading the lora somewhere, specify that it is trained on preview, so that users aren't confused if it doesn't work well on the final version.
+
+Anima LoRAs are saved in ComfyUI format.
