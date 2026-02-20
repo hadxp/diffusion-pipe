@@ -63,8 +63,9 @@ def _map_and_cache(dataset, map_fn, cache_dir, cache_file_prefix='', new_fingerp
         new_fingerprint=new_fingerprint,
         remove_columns=dataset.column_names,
         batched=True,
-        batch_size=caching_batch_size,
-        num_proc=NUM_PROC,
+        batch_size=1,
+        #batch_size=caching_batch_size,
+        #num_proc=NUM_PROC,
     )
     dataset.set_format('torch')
     return dataset
