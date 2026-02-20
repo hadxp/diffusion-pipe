@@ -24,7 +24,7 @@ import numpy as np
 
 from utils import dataset as dataset_util
 from utils import common
-from utils.common import is_main_process, get_rank, DTYPE_MAP, empty_cuda_cache
+from utils.common import is_main_process, get_rank, DTYPE_MAP, empty_cuda_cache, setup_checkpoint_signal, setup_interrupt_handler
 import utils.saver
 from utils.isolate_rng import isolate_rng
 from utils.patches import apply_patches
@@ -840,21 +840,44 @@ if __name__ == '__main__':
     tb_writer = SummaryWriter(log_dir=run_dir) if is_main_process() else None
     saver = utils.saver.Saver(args, config, is_adapter, run_dir, model, train_dataloader, model_engine, pipeline_model)
 
+    setup_checkpoint_signal()
+
+    setup_interrupt_handler(saver)
+
     disable_block_swap_for_eval = config.get('disable_block_swap_for_eval', False)
     if config['eval_before_first_step'] and not resume_from_checkpoint:
         evaluate(model, model_engine, eval_dataloaders, tb_writer, 0, config['eval_gradient_accumulation_steps'], disable_block_swap_for_eval)
+
+    num_train_items = len(train_dataloader)
+    num_train_epochs = config['epochs']
+    total_optimization_steps = steps_per_epoch * num_train_epochs
+
+    print("------------")
+    print(f"  num train items: {num_train_items}")
+    print(f"  num steps per one epoch: {steps_per_epoch}")
+    print(f"  num epochs: {num_train_epochs}")
+    print(f"  batch size: {global_batch_size}")
+    print(f"  total steps: {total_optimization_steps}")
+    print("------------")
 
     # TODO: this is state we need to save and resume when resuming from checkpoint. It only affects logging.
     epoch_loss = 0
     num_steps = 0
     empty_cuda_cache()
     while True:
+        setup_interrupt_handler.current_step = step  # Update current step
         model_engine.reset_activation_shape()
         iterator = get_data_iterator_for_step(train_dataloader, model_engine)
         loss = model_engine.train_batch(iterator).item()
         epoch_loss += loss
         num_steps += 1
         train_dataloader.sync_epoch()
+
+        # Check if checkpoint save is needed
+        if is_main_process() and setup_checkpoint_signal.should_save:
+            saver.save_checkpoint(step)
+            setup_checkpoint_signal.should_save = False
+            print("Checkpoint saved successfully!")
 
         new_epoch, checkpointed, saved = saver.process_epoch(epoch, step, examples)
         finished_epoch = True if new_epoch != epoch else False
