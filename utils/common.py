@@ -4,6 +4,7 @@ import time
 import math
 from pathlib import Path
 import os
+import signal
 
 import torch
 import deepspeed.comm.comm as dist

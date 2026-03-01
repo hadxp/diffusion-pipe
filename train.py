@@ -1,6 +1,7 @@
 import argparse
 import os
 import wandb
+import signal
 import sys
 # Disable comfy_kitchen during training to avoid autograd errors
 sys.modules["comfy_kitchen"] = None
@@ -271,6 +272,9 @@ def _get_automagic_lrs(optimizer):
 
 
 if __name__ == '__main__':
+    # With multiple GPUs / large batch sizes, the dataloader can trigger "too many open files" errors unless we do this.
+    torch.multiprocessing.set_sharing_strategy('file_system')
+    deepspeed.utils.set_log_level_from_string('info')
     apply_patches()
 
     with open(args.config) as f:
@@ -863,10 +867,14 @@ if __name__ == '__main__':
     print(f"  total steps: {total_optimization_steps}")
     print("------------")
 
+    from tqdm import tqdm
+    progress_bar = tqdm(range(total_optimization_steps), smoothing=0, disable=not is_main_process, desc="steps")
+
     # TODO: this is state we need to save and resume when resuming from checkpoint. It only affects logging.
     epoch_loss = 0
     num_steps = 0
     empty_cuda_cache()
+    losses: list[float] = []
     while True:
         setup_interrupt_handler.current_step = step  # Update current step
         model_engine.reset_activation_shape()
@@ -925,6 +933,12 @@ if __name__ == '__main__':
             break
         step += 1
         examples += global_batch_size
+
+        progress_bar.update(1)
+        losses.append(loss)
+        avr_loss = sum(losses) / len(losses)
+        logs = {"avr_loss": avr_loss}
+        progress_bar.set_postfix(**logs)
 
     # Save final training state checkpoint and model, unless we just saved them.
     if not checkpointed:
