@@ -1,8 +1,8 @@
 import argparse
 import os
 import wandb
-# Disable comfy_kitchen during training to avoid autograd errors
 import sys
+# Disable comfy_kitchen during training to avoid autograd errors
 sys.modules["comfy_kitchen"] = None
 from datetime import datetime, timezone
 import shutil
@@ -27,7 +27,7 @@ import numpy as np
 
 from utils import dataset as dataset_util
 from utils import common
-from utils.common import is_main_process, get_rank, DTYPE_MAP, empty_cuda_cache
+from utils.common import is_main_process, get_rank, DTYPE_MAP, empty_cuda_cache , setup_checkpoint_signal, setup_interrupt_handler
 import utils.saver
 from utils.isolate_rng import isolate_rng
 from utils.patches import apply_patches
@@ -271,9 +271,6 @@ def _get_automagic_lrs(optimizer):
 
 
 if __name__ == '__main__':
-    # With multiple GPUs / large batch sizes, the dataloader can trigger "too many open files" errors unless we do this.
-    torch.multiprocessing.set_sharing_strategy('file_system')
-    deepspeed.utils.set_log_level_from_string('info')
     apply_patches()
 
     with open(args.config) as f:
@@ -357,6 +354,12 @@ if __name__ == '__main__':
     elif model_type == 'hunyuan_video_15':
         from models import hunyuan_video_15
         model = hunyuan_video_15.HunyuanVideo15Pipeline(config)
+    elif model_type == 'framepack-hv':
+        from models import hy_framepack
+        model = hy_framepack.HYFramepackPipeline(config)
+    elif model_type == 'kandinsky5':
+        from models import kandinsky5
+        model = kandinsky5.Kandinsky5Pipeline(config)
     elif model_type == 'flux2':
         from models import flux2
         model = flux2.Flux2Pipeline(config)
@@ -400,6 +403,10 @@ if __name__ == '__main__':
         eval_image_micro_batch_size_per_gpu = {x[0]: x[1] for x in eval_image_micro_batch_size_per_gpu}
 
     default_micro_batch_size_per_gpu = list(micro_batch_size_per_gpu.values())[0]
+    default_eval_micro_batch_size_per_gpu = list(eval_micro_batch_size_per_gpu.values())[0]
+
+    default_image_micro_batch_size_per_gpu = list(image_micro_batch_size_per_gpu.values())[0]
+    default_eval_image_micro_batch_size_per_gpu = list(eval_image_micro_batch_size_per_gpu.values())[0]
 
     gradient_release = config['optimizer'].get('gradient_release', False)
     ds_config = {
@@ -410,7 +417,7 @@ if __name__ == '__main__':
         'steps_per_print': config.get('steps_per_print', 1),
     }
     caching_batch_size = config.get('caching_batch_size', 1)
-    dataset_manager = dataset_util.DatasetManager(model, regenerate_cache=regenerate_cache, trust_cache=args.trust_cache, caching_batch_size=caching_batch_size)
+    dataset_manager = dataset_util.DatasetManager(model, regenerate_cache=regenerate_cache, caching_batch_size=caching_batch_size)
 
     train_data = dataset_util.Dataset(dataset_config, model, skip_dataset_validation=args.i_know_what_i_am_doing)
     dataset_manager.register(train_data)
@@ -595,7 +602,7 @@ if __name__ == '__main__':
         config=ds_config,
     )
     # Newer Deepspeed versions fail when pipeline_stages>1 because of a check on this field which defaults to False. But, pipeline
-    # parallelism has always relied on "Torch-style" backward(), so I think this is an oversight by Deepspeed devs and it's safe
+    # parallelism has always relied on "Torch-style" backward(), so I think this is an oversight by Deepspeed devs, and it's safe
     # to force this to True to get it to work.
     model_engine._support_torch_style_backward = True
     global_batch_size = model_engine.train_micro_batch_size_per_gpu() * model_engine.gradient_accumulation_steps() * model_engine.grid.get_data_parallel_world_size()
@@ -756,22 +763,20 @@ if __name__ == '__main__':
          grid = model_engine.grid
          model_engine.first_last_stage_group = dist.new_group(ranks=[grid.pp_group[0], grid.pp_group[-1]])
 
-
-
     train_data.post_init(
         model_engine.grid.get_data_parallel_rank(),
         model_engine.grid.get_data_parallel_world_size(),
-        micro_batch_size_per_gpu,
+        default_micro_batch_size_per_gpu,
         model_engine.gradient_accumulation_steps(),
-        image_micro_batch_size_per_gpu,
+        default_image_micro_batch_size_per_gpu
     )
     for eval_data in eval_data_map.values():
         eval_data.post_init(
             model_engine.grid.get_data_parallel_rank(),
             model_engine.grid.get_data_parallel_world_size(),
-            eval_micro_batch_size_per_gpu,
+            default_eval_micro_batch_size_per_gpu,
             config['eval_gradient_accumulation_steps'],
-            eval_image_micro_batch_size_per_gpu,
+            default_eval_image_micro_batch_size_per_gpu
         )
 
     # Might be useful because we set things in fp16 / bf16 without explicitly enabling Deepspeed fp16 mode.
@@ -838,21 +843,44 @@ if __name__ == '__main__':
     tb_writer = SummaryWriter(log_dir=run_dir) if is_main_process() else None
     saver = utils.saver.Saver(args, config, is_adapter, run_dir, model, train_dataloader, model_engine, pipeline_model)
 
+    setup_checkpoint_signal()
+
+    setup_interrupt_handler(saver)
+
     disable_block_swap_for_eval = config.get('disable_block_swap_for_eval', False)
     if config['eval_before_first_step'] and not resume_from_checkpoint:
         evaluate(model, model_engine, eval_dataloaders, tb_writer, 0, config['eval_gradient_accumulation_steps'], disable_block_swap_for_eval)
+
+    num_train_items = len(train_dataloader)
+    num_train_epochs = config['epochs']
+    total_optimization_steps = steps_per_epoch * num_train_epochs
+
+    print("------------")
+    print(f"  num train items: {num_train_items}")
+    print(f"  num steps per one epoch: {steps_per_epoch}")
+    print(f"  num epochs: {num_train_epochs}")
+    print(f"  batch size: {global_batch_size}")
+    print(f"  total steps: {total_optimization_steps}")
+    print("------------")
 
     # TODO: this is state we need to save and resume when resuming from checkpoint. It only affects logging.
     epoch_loss = 0
     num_steps = 0
     empty_cuda_cache()
     while True:
+        setup_interrupt_handler.current_step = step  # Update current step
         model_engine.reset_activation_shape()
         iterator = get_data_iterator_for_step(train_dataloader, model_engine)
         loss = model_engine.train_batch(iterator).item()
         epoch_loss += loss
         num_steps += 1
         train_dataloader.sync_epoch()
+
+        # Check if checkpoint save is needed
+        if is_main_process() and setup_checkpoint_signal.should_save:
+            saver.save_checkpoint(step)
+            setup_checkpoint_signal.should_save = False
+            print("Checkpoint saved successfully!")
 
         new_epoch, checkpointed, saved = saver.process_epoch(epoch, step, examples)
         finished_epoch = True if new_epoch != epoch else False

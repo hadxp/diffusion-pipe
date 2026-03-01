@@ -158,3 +158,43 @@ def sample_t(t, batch_size, quantile=None):
     else:
         i = torch.randint(0, len(t), size=(batch_size,))
     return t[i]
+
+
+def setup_checkpoint_signal():
+    """Set up signal handler for checkpoint saving"""
+    if not is_main_process():
+        return
+
+    def trigger_save(signum, frame):
+        print("\nDetected save signal (SIGUSR1), saving checkpoint...")
+        # Set a flag due to signal handler limitations
+        setup_checkpoint_signal.should_save = True
+
+    signal.signal(signal.SIGUSR1, trigger_save)
+    setup_checkpoint_signal.should_save = False
+
+
+def setup_interrupt_handler(saver):
+    """Set up Ctrl+C interrupt handler"""
+    if not is_main_process():
+        return
+
+    def signal_handler(signum, frame):
+        print("\nDetected interrupt signal, saving checkpoint...")
+        try:
+            saver.save_checkpoint(setup_interrupt_handler.current_step)
+            print("Checkpoint saved successfully!")
+        except Exception as e:
+            print(f"Error occurred while saving checkpoint: {e}")
+        finally:
+            print("Safely exiting training...")
+            # Notify other processes to exit
+            if dist.is_initialized():
+                dist.barrier()
+            sys.exit(0)
+
+    # Set up handlers for SIGINT (Ctrl+C) and SIGTERM
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    setup_interrupt_handler.current_step = 0
+    setup_interrupt_handler.triggered = False  # Add flag to prevent duplicate triggers

@@ -6,7 +6,6 @@ from collections import defaultdict
 
 import torch
 
-
 class Cache:
     def __init__(self, path: str, fingerprint: str, shard_size_gb=1):
         self.path = Path(path)
@@ -26,9 +25,7 @@ class Cache:
         assert isinstance(idx, int)
         shard_id, shard_index = self.items[idx]
         offset, size = self.shard_metadata[shard_id][shard_index]
-        if shard_id not in self.open_files:
-            self.open_files[shard_id] = open(self.path / f'shard_{shard_id}.bin', 'rb')
-        f = self.open_files[shard_id]
+        f = self.open_files.setdefault(shard_id, open(self.path / f'shard_{shard_id}.bin', 'rb'))
         f.seek(offset)
         byte_string = f.read(size)
         buffer = io.BytesIO(byte_string)
@@ -131,7 +128,6 @@ class Cache:
         current_size_gb = self.shard_file.tell() / 1_000_000_000
         if current_size_gb >= self.shard_size_gb:
             self.finalize_current_shard()
-
 
 # for testing
 if __name__ == '__main__':
