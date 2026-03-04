@@ -274,7 +274,7 @@ def _get_automagic_lrs(optimizer):
 if __name__ == '__main__':
     # With multiple GPUs / large batch sizes, the dataloader can trigger "too many open files" errors unless we do this.
     torch.multiprocessing.set_sharing_strategy('file_system')
-    deepspeed.utils.set_log_level_from_string('info')
+    deepspeed.utils.set_log_level_from_string('critical')
     apply_patches()
 
     with open(args.config) as f:
@@ -934,11 +934,11 @@ if __name__ == '__main__':
         step += 1
         examples += global_batch_size
 
-        progress_bar.update(1)
         losses.append(loss)
         avr_loss = sum(losses) / len(losses)
-        logs = {"avr_loss": avr_loss}
+        logs = {"avr_loss": avr_loss, "epoch": epoch}
         progress_bar.set_postfix(**logs)
+        progress_bar.update(1)
 
     # Save final training state checkpoint and model, unless we just saved them.
     if not checkpointed:
